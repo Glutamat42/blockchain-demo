@@ -30,6 +30,8 @@ def mine():
     previous_hash = blockchain.hash(last_block)
     block = blockchain.new_block(proof, previous_hash)
 
+    blockchain.spreadBlock(block)
+
     response = {
         'message': 'New Block Forged',
         'index': block['index'],
@@ -103,6 +105,40 @@ def consensus():
     return flask.jsonify(response), 200
 
 
+@app.route('/transactions/add', methods=['POST'])
+def addTransactions():
+    values = flask.request.get_json()
+
+    blockchain.receivedTransactions(values['transactions'])
+
+    return flask.jsonify(), 200
+
+
+@app.route('/block/add', methods=['POST'])
+def addBlock():
+    values = flask.request.get_json()
+
+    blockchain.receivedBlock(values['block'])
+
+    return flask.jsonify(), 200
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = 5001
+    print(f'port: {port}')
+    app.run(host='0.0.0.0', port=port)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

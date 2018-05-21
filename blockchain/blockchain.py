@@ -2,6 +2,7 @@ import hashlib
 import json
 import time
 import requests
+from uuid import uuid4
 from urllib.parse import urlparse
 
 
@@ -12,7 +13,39 @@ class Blockchain(object):
         self.nodes = set()
 
         # Create genesis block
-        self.new_block(previous_hash=1, proof=100)
+        # self.new_block(previous_hash=1, proof=100)
+
+        # load blockchain from hdd
+        self.loadExistingChain()
+        # get addresses of many other nodes
+        self.findNodes()
+        # update own chain
+        self.resolve_conflicts()
+
+    def loadExistingChain(self):
+        """
+        load chain from file system
+        """
+
+        # TODO
+        self.chain.append({
+            'index': 1,
+            'timestamp': 1526928965.244928,
+            'transactions': [],
+            'proof': 1,
+            'previous_hash': '1',
+        })
+
+    def findNodes(self):
+        """
+        uses different algorithms to find other nodes
+        """
+
+        # TODO: add ips of nodes sending data to our node
+
+        # TODO
+        self.nodes.add('127.0.0.1:5001')
+        self.nodes.add('127.0.0.1:5000')
 
     def new_block(self, proof, previous_hash=None):
         """
@@ -45,14 +78,82 @@ class Blockchain(object):
         :param amount: <int> Amount
         :return: <int> The index of the Block that will hold this transaction
         """
-
-        self.current_transactions.append({
+        newTx = {
+            'txid': str(uuid4()).replace('-', ''),
             'sender': sender,
             'recipient': recipient,
             'amount': amount,
-        })
+        }
+
+        self.current_transactions.append(newTx)
+
+        if sender is not '0':
+            self.spreadTransactions([newTx])
 
         return self.last_block['index'] + 1
+
+    def spreadTransactions(self, transactions):
+        """
+        broadcasts new transactions to the network
+        :param transactions: <array> Transactions
+        """
+        for node in self.nodes:
+            try:
+                requests.post(f'http://{node}/transactions/add', json={'transactions': json.dumps(transactions)}, timeout=1.0)
+            except:
+                print(f'could not reach host {node}')
+
+    def spreadBlock(self, block):
+        """
+        broadcasts the latest block to the network
+        :param block: <dict> one block
+        """
+        for node in self.nodes:
+            try:
+                requests.post(f'http://{node}/block/add', json={'block': json.dumps(block)}, timeout=1.0)
+            except:
+                print(f'could not reach host {node}')
+
+    def receivedBlock(self, block):
+        """
+        checks wether a received block is valid and not already in the nodes blockchain
+
+        :param block: <dict> Block
+        :return: Wether the block was added or not
+        """
+
+        newBlock = json.loads(block)
+        if self.hash(newBlock) is not self.hash(self.chain[-1]):
+            if self.valid_chain(self.chain + [newBlock]):
+                self.chain.append(newBlock)
+                self.spreadBlock(newBlock)
+                return True
+        return False
+
+    def receivedTransactions(self, transactions):
+        """
+        Receives a list of transactions of another node.
+        If the transaction is not already in a block it will be added to own transactions list
+
+        :param transactions: <array> Transactions
+        """
+
+        # list of not already known transactions -> broadcast to network
+        unknownTransactions = []
+
+        receivedTransactions = json.loads(transactions)
+        for newTransaction in receivedTransactions:
+            txIsNew = True
+            for block in self.chain:
+                for tx in block['transactions']:
+                    if newTransaction['txid'] is tx['txid']:
+                        txIsNew = False
+            if txIsNew:
+                self.current_transactions.append(newTransaction)
+                unknownTransactions.append(newTransaction)
+
+        if len(unknownTransactions) > 0:
+            self.spreadTransactions(unknownTransactions)
 
     def proof_of_work(self, last_proof):
         """
@@ -117,16 +218,19 @@ class Blockchain(object):
 
         # Grab and verify the chains from all the nodes in our network
         for node in neighbours:
-            response = requests.get(f'http://{node}/chain')
+            try:
+                response = requests.get(f'http://{node}/chain', timeout=1.0)
 
-            if response.status_code == 200:
-                length = response.json()['length']
-                chain = response.json()['chain']
+                if response.status_code == 200:
+                    length = response.json()['length']
+                    chain = response.json()['chain']
 
-                # check if chain is longer and valid
-                if length > max_length and self.valid_chain(chain):
-                    max_length = length
-                    new_chain = chain
+                    # check if chain is longer and valid
+                    if length > max_length and self.valid_chain(chain):
+                        max_length = length
+                        new_chain = chain
+            except:
+                print(f'could not reach host {node}')
 
         # replace our chain if we discovered a longer one
         if new_chain:
@@ -134,8 +238,6 @@ class Blockchain(object):
             return True
 
         return False
-
-
 
     @staticmethod
     def valid_proof(last_proof, proof):
@@ -148,7 +250,7 @@ class Blockchain(object):
         """
         guess = f'{last_proof}{proof}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
-        return guess_hash[:5] == '00000'
+        return guess_hash[:4] == '0000'
 
     @staticmethod
     def hash(block):
