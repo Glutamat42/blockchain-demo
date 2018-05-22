@@ -5,11 +5,26 @@ from uuid import uuid4
 
 
 class Block:
-    def __init__(self, prevHash):
+    def __init__(self, prevHash, transactions=None, nonce=None, timestamp=None):
+        """
+        initialize new block
+        if transactions, nonce and timestamp are specified a completed block will be created,
+        if one value is missing an empty block (just with prev_hashI will be created
+
+        :param prevHash: <str> previous block hash
+        :param transactions: <list> of transactions
+        :param nonce: <int> proof of work
+        :param timestamp: <float> unix timestamp
+        """
         self.transactions = []
         self.prevHash = prevHash
         self.blockTime = time.time()
         self.nonce = None
+
+        if transactions is not None and nonce is not None and timestamp is not None:
+            self.transactions = transactions
+            self.nonce = nonce
+            self.blockTime = timestamp
 
     def initExisting(self, transactions, nonce, timestamp):
         self.transactions = transactions

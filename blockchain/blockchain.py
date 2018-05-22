@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+
 import requests
 from uuid import uuid4
 from network import Network
@@ -8,6 +10,7 @@ from block import Block
 
 class Blockchain(object):
     def __init__(self):
+        # TODO ask for pending transactions (on startup)
         # TODO load on startup
         # generate unique node address
         self.node_identifier = str(uuid4()).replace('-', '')
@@ -16,7 +19,8 @@ class Blockchain(object):
         self.nodes = Network()
 
         # load blockchain from hdd
-        self.loadExistingChain()
+        # self._loadExistingChain()
+        self._loadChainFromDisk()
 
         self.nextBlock = Block(self.hash(self.last_block))
 
@@ -24,9 +28,9 @@ class Blockchain(object):
         print('get latest chain from other nodes')
         self.resolve_conflicts()
 
-    def loadExistingChain(self):
+    def _loadExistingChain(self):
         """
-        load chain from file system
+        USE THIS INSTEAD OF _loadChainFromDisk() ONLY FOR DEBUGGING
         """
 
         # TODO
@@ -47,11 +51,15 @@ class Blockchain(object):
         self.chain.append(self.nextBlock)
         self.nextBlock = Block(self.hash(self.nextBlock))
 
+        # now save the new chain to disk
+        self._saveChainToDisk()
+
         return self.last_block
 
     def spreadTransactions(self, transactions):
         """
         broadcasts new transactions to the network
+
         :param transactions: <array> Transactions
         """
         self.nodes.postToEveryNode('transaction/add', 'transactions', transactions)
@@ -59,6 +67,7 @@ class Blockchain(object):
     def spreadBlock(self, block):
         """
         broadcasts the latest block to the network
+
         :param block: <dict> one block
         """
         self.nodes.postToEveryNode('block/add', 'block', block.getBlockAsJson())
@@ -83,7 +92,7 @@ class Blockchain(object):
 
     def newTransaction(self, sender, recipient, amount):
         txid = self.nextBlock.new_transaction(sender, recipient, amount)
-        if sender is not '0':
+        if sender is not '0': # this is the transaction i add to get my mining reward
             self.spreadTransactions(self.nextBlock.getTxById(txid))
         return txid
 
@@ -127,6 +136,7 @@ class Blockchain(object):
 
         return proof
 
+    # TODO: check if genesis block is equal to our one
     def valid_chain(self, chain):
         """
         Determine if a given blockchain is valid
@@ -215,6 +225,32 @@ class Blockchain(object):
         for block in self.chain:
             jsonChain.append(block.getBlockAsJson())
         return jsonChain
+
+    def _loadChainFromDisk(self):
+        if len(self.chain) != 0:
+            print('tried to load chain from disk, but chain in ram is not empty')
+
+        if os.path.isfile('blockchain.bc'):
+            with open('blockchain.bc', 'r') as blockchainFile:
+                for blockJsonString in blockchainFile:
+                    blockJson = json.loads(blockJsonString)
+                    self.chain.append(Block(blockJson['previous_hash'],
+                                            transactions=blockJson['transactions'],
+                                            nonce=blockJson['nonce'],
+                                            timestamp=blockJson['timestamp']))
+        # no blocks were read or no file found -> create genesis block
+        if len(self.chain) == 0:
+            newBlock = Block('1')
+            newBlock.initExisting([], 1, 1526928965.244928)
+            self.chain.append(newBlock)
+            self._saveChainToDisk()
+
+    def _saveChainToDisk(self):
+        with open('blockchain.bc', 'w') as blockchainFile:
+            for block in self.chain:
+                blockJson = json.dumps(block.getBlockAsJson())
+                blockchainFile.write(f'{blockJson}\n')
+        print('saved chain to disk')
 
     @staticmethod
     def valid_proof(block, proof):

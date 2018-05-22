@@ -27,6 +27,7 @@ class Network:
         parsed_url = urlparse(address)
         self.nodes.add(parsed_url.netloc)
 
+    # TODO do this in another thread. adding transactions takes forever
     def postToEveryNode(self, url, jsonKey, jsonData):
         """
         send data to all nodes
@@ -42,4 +43,3 @@ class Network:
                 print(f'could not reach host {node}')
             except requests.ConnectionError:
                 print(f'could not reach host {node}')
-
