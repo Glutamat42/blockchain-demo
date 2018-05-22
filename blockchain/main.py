@@ -14,30 +14,15 @@ blockchain = Blockchain()
 
 @app.route('/mine', methods=['GET'])
 def mine():
-    # get the next proof of work
-    last_block = blockchain.last_block
-    last_proof = last_block['proof']
-    proof = blockchain.proof_of_work(last_proof)
-
-    # adding mining reward
-    blockchain.new_transaction(
-        sender='0',
-        recipient=node_identifier,
-        amount=1,
-    )
-
-    # add new block to chain
-    previous_hash = blockchain.hash(last_block)
-    block = blockchain.new_block(proof, previous_hash)
-
-    blockchain.spreadBlock(block)
+    block = blockchain.mine()
 
     response = {
         'message': 'New Block Forged',
-        'index': block['index'],
-        'transactions': block['transactions'],
-        'proof': block['proof'],
-        'previous_hash': block['previous_hash']
+        'timestamp': block.blockTime,
+        'merkle': block.transactionsHash,
+        'transactions': block.transactions,
+        'proof': block.nonce,
+        'previous_hash': block.prevHash
     }
 
     return flask.jsonify(response), 200
@@ -53,10 +38,10 @@ def new_transaction():
         return 'Missing values', 400
 
     # add new transaction to blockchain object
-    index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
+    index = blockchain.newTransaction(values['sender'], values['recipient'], values['amount'])
 
     response = {
-        'message': f'Transaction will be added to Block {index}'
+        'message': f'Transaction with added with id {index}'
     }
 
     return flask.jsonify(response), 201
@@ -65,8 +50,8 @@ def new_transaction():
 @app.route('/chain', methods=['GET'])
 def full_chain():
     response = {
-        'chain': blockchain.chain,
-        'length': len(blockchain.chain)
+        'chain': blockchain.getBlockchainAsJson(),
+        'length': len(blockchain.getBlockchainAsJson())
     }
     return flask.jsonify(response), 200
 
@@ -79,11 +64,11 @@ def register_nodes():
         return 'Error: Please submit a valid list of nodes', 400
 
     for node in nodes:
-        blockchain.register_node(node)
+        blockchain.nodes.register_node(node)
 
     response = {
         'message': 'New nodes have been added',
-        'total_nodes': list(blockchain.nodes),
+        'total_nodes': list(blockchain.nodes.nodes),
     }
     return flask.jsonify(response), 201
 
@@ -124,7 +109,7 @@ def addBlock():
 
 
 if __name__ == '__main__':
-    port = 5001
+    port = 5000
     print(f'port: {port}')
     app.run(host='0.0.0.0', port=port)
 

@@ -1,25 +1,27 @@
 import hashlib
 import json
-import time
 import requests
 from uuid import uuid4
-from urllib.parse import urlparse
+from network import Network
+from block import Block
 
 
 class Blockchain(object):
     def __init__(self):
-        self.chain = []
-        self.current_transactions = []
-        self.nodes = set()
+        # TODO load on startup
+        # generate unique node address
+        self.node_identifier = str(uuid4()).replace('-', '')
 
-        # Create genesis block
-        # self.new_block(previous_hash=1, proof=100)
+        self.chain = []
+        self.nodes = Network()
 
         # load blockchain from hdd
         self.loadExistingChain()
-        # get addresses of many other nodes
-        self.findNodes()
+
+        self.nextBlock = Block(self.hash(self.last_block))
+
         # update own chain
+        print('get latest chain from other nodes')
         self.resolve_conflicts()
 
     def loadExistingChain(self):
@@ -28,26 +30,11 @@ class Blockchain(object):
         """
 
         # TODO
-        self.chain.append({
-            'index': 1,
-            'timestamp': 1526928965.244928,
-            'transactions': [],
-            'proof': 1,
-            'previous_hash': '1',
-        })
+        newBlock = Block('1')
+        newBlock.initExisting([], 1, 1526928965.244928)
+        self.chain.append(newBlock)
 
-    def findNodes(self):
-        """
-        uses different algorithms to find other nodes
-        """
-
-        # TODO: add ips of nodes sending data to our node
-
-        # TODO
-        self.nodes.add('127.0.0.1:5001')
-        self.nodes.add('127.0.0.1:5000')
-
-    def new_block(self, proof, previous_hash=None):
+    def new_block(self, proof):
         """
         Create a new Block in the Blockchain
 
@@ -55,64 +42,26 @@ class Blockchain(object):
         :param previous_hash: (Optional) <str> Hash of previous Block
         :return: <dict> New Block
         """
-        block = {
-            'index': len(self.chain) + 1,
-            'timestamp': time.time(),
-            'transactions': self.current_transactions,
-            'proof': proof,
-            'previous_hash': previous_hash or self.hash(self.chain[-1]),
-        }
 
-        # reset current list of transactions
-        self.current_transactions = []
+        self.nextBlock.nonce = proof
+        self.chain.append(self.nextBlock)
+        self.nextBlock = Block(self.hash(self.nextBlock))
 
-        self.chain.append(block)
-        return block
-
-    def new_transaction(self, sender, recipient, amount):
-        """
-        Creates a new transaction to go into the next mined Block
-
-        :param sender: <str> Address of the Sender
-        :param recipient: <str> Address of the Recipient
-        :param amount: <int> Amount
-        :return: <int> The index of the Block that will hold this transaction
-        """
-        newTx = {
-            'txid': str(uuid4()).replace('-', ''),
-            'sender': sender,
-            'recipient': recipient,
-            'amount': amount,
-        }
-
-        self.current_transactions.append(newTx)
-
-        if sender is not '0':
-            self.spreadTransactions([newTx])
-
-        return self.last_block['index'] + 1
+        return self.last_block
 
     def spreadTransactions(self, transactions):
         """
         broadcasts new transactions to the network
         :param transactions: <array> Transactions
         """
-        for node in self.nodes:
-            try:
-                requests.post(f'http://{node}/transactions/add', json={'transactions': json.dumps(transactions)}, timeout=1.0)
-            except:
-                print(f'could not reach host {node}')
+        self.nodes.postToEveryNode('transaction/add', 'transactions', transactions)
 
     def spreadBlock(self, block):
         """
         broadcasts the latest block to the network
         :param block: <dict> one block
         """
-        for node in self.nodes:
-            try:
-                requests.post(f'http://{node}/block/add', json={'block': json.dumps(block)}, timeout=1.0)
-            except:
-                print(f'could not reach host {node}')
+        self.nodes.postToEveryNode('block/add', 'block', block.getBlockAsJson())
 
     def receivedBlock(self, block):
         """
@@ -122,13 +71,21 @@ class Blockchain(object):
         :return: Wether the block was added or not
         """
 
-        newBlock = json.loads(block)
+        jsonBlock = json.loads(block)
+        newBlock = Block(jsonBlock['previous_hash'])
+        newBlock.initExisting(jsonBlock['transactions'], jsonBlock['nonce'], jsonBlock['timestamp'])
         if self.hash(newBlock) is not self.hash(self.chain[-1]):
             if self.valid_chain(self.chain + [newBlock]):
                 self.chain.append(newBlock)
                 self.spreadBlock(newBlock)
                 return True
         return False
+
+    def newTransaction(self, sender, recipient, amount):
+        txid = self.nextBlock.new_transaction(sender, recipient, amount)
+        if sender is not '0':
+            self.spreadTransactions(self.nextBlock.getTxById(txid))
+        return txid
 
     def receivedTransactions(self, transactions):
         """
@@ -145,17 +102,17 @@ class Blockchain(object):
         for newTransaction in receivedTransactions:
             txIsNew = True
             for block in self.chain:
-                for tx in block['transactions']:
+                for tx in block.transactions:
                     if newTransaction['txid'] is tx['txid']:
                         txIsNew = False
             if txIsNew:
-                self.current_transactions.append(newTransaction)
+                self.nextBlock.transactions.append(newTransaction)
                 unknownTransactions.append(newTransaction)
 
         if len(unknownTransactions) > 0:
             self.spreadTransactions(unknownTransactions)
 
-    def proof_of_work(self, last_proof):
+    def proof_of_work(self, block):
         """
         Simple Proof of Work Algorithm:
          - Find a number p' such that hash(pp') contains leading 4 zeroes, where p is the previous p'
@@ -165,19 +122,10 @@ class Blockchain(object):
         :return: <int>
         """
         proof = 0
-        while self.valid_proof(last_proof, proof) is False:
+        while self.valid_proof(block, proof) is False:
             proof += 1
 
         return proof
-
-    def register_node(self, address):
-        """
-        Add a new node to the list of nodes
-        :param address: <str> Address of node. Eg. 'http://192.168.0.5:5000'
-        :return: None
-        """
-        parsed_url = urlparse(address)
-        self.nodes.add(parsed_url.netloc)
 
     def valid_chain(self, chain):
         """
@@ -192,11 +140,11 @@ class Blockchain(object):
         while current_index < len(chain):
             block = chain[current_index]
             # verify hash of the block
-            if block['previous_hash'] != self.hash(last_block):
+            if block.prevHash != self.hash(last_block):
                 return False
 
             # verify the proof of work
-            if not self.valid_proof(last_block['proof'], block['proof']):
+            if not self.valid_proof(block, block.nonce):
                 return False
 
             last_block = block
@@ -211,7 +159,7 @@ class Blockchain(object):
         :return: <bool> True if our chain was replaced, False if not
         """
 
-        neighbours = self.nodes
+        neighbours = self.nodes.nodes
         new_chain = None
 
         max_length = len(self.chain)
@@ -219,17 +167,26 @@ class Blockchain(object):
         # Grab and verify the chains from all the nodes in our network
         for node in neighbours:
             try:
-                response = requests.get(f'http://{node}/chain', timeout=1.0)
+                response = requests.get(f'http://{node}/chain', timeout=1.5)
 
                 if response.status_code == 200:
                     length = response.json()['length']
-                    chain = response.json()['chain']
+                    chainJson = response.json()['chain']
+                    # convert json
+                    chain = []
+                    for block in chainJson:
+                        newBlock = Block(block['previous_hash'])
+                        newBlock.initExisting(block['transactions'], block['nonce'], block['timestamp'])
+                        chain.append(newBlock)
 
                     # check if chain is longer and valid
                     if length > max_length and self.valid_chain(chain):
                         max_length = length
                         new_chain = chain
-            except:
+
+            except requests.ReadTimeout:
+                print(f'could not reach host {node}')
+            except requests.ConnectionError:
                 print(f'could not reach host {node}')
 
         # replace our chain if we discovered a longer one
@@ -239,16 +196,38 @@ class Blockchain(object):
 
         return False
 
+    def mine(self):
+        # adding mining reward
+        self.nextBlock.new_transaction(
+            sender='0',
+            recipient=self.node_identifier,
+            amount=25,
+        )
+
+        proof = self.proof_of_work(self.nextBlock)
+        block = self.new_block(proof)
+        self.spreadBlock(block)
+
+        return block
+
+    def getBlockchainAsJson(self):
+        jsonChain = []
+        for block in self.chain:
+            jsonChain.append(block.getBlockAsJson())
+        return jsonChain
+
     @staticmethod
-    def valid_proof(last_proof, proof):
+    def valid_proof(block, proof):
         """
         Validates the Proof: Does hash(last_proof, proof) contain 4 leading zeroes?
 
-        :param last_proof: <int> Previous Proof
-        :param proof: <int> Current Proof
+        :param block: <dict> current Block
+        :param proof: <int> nonce / proof
         :return: <bool> True if correct, False if not.
         """
-        guess = f'{last_proof}{proof}'.encode()
+        blockHeader = block.blockHeader
+
+        guess = f'{blockHeader["timestamp"]}{blockHeader["merkle"]}{blockHeader["previous_hash"]}{proof}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == '0000'
 
@@ -262,7 +241,7 @@ class Blockchain(object):
         """
 
         # We must make sure that the Dictionary is Ordered, or we'll have inconsistent hashes
-        block_string = json.dumps(block, sort_keys=True).encode()
+        block_string = json.dumps(block.blockHeader, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
     @property
