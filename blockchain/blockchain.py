@@ -11,7 +11,7 @@ from block import Block
 class Blockchain(object):
     def __init__(self):
         # TODO ask for pending transactions (on startup)
-        # TODO load on startup
+        # TODO save to disk
         # generate unique node address
         self.node_identifier = str(uuid4()).replace('-', '')
 
@@ -136,13 +136,17 @@ class Blockchain(object):
 
         return proof
 
-    # TODO: check if genesis block is equal to our one
     def valid_chain(self, chain):
         """
         Determine if a given blockchain is valid
         :param chain: <list> A blockchain
         :return: <bool> True if valid, False if not
         """
+
+        # check if genesis block is equal to our one
+        if self.hash(self.chain[0]) != self.hash(chain[0]):
+            print('chain has with another genesis block')
+            return False
 
         last_block = chain[0]
         current_index = 1
